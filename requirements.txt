@@ -8,8 +8,8 @@ requests==2.32.3
 
 # Data Handling
 pandas==2.3.3
-pyarrow==17.0.0
 numpy==1.26.4
+pyarrow>=14.0.0 --no-build-isolation
 
 # Snowflake (stable + pandas support)
 snowflake-connector-python[pandas]==3.18.0
