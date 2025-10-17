@@ -1,4 +1,19 @@
-fastapi
-uvicorn
-requests
-python-dotenv
+# === FleetInsight FastAPI Dependencies ===
+
+# FastAPI Web Framework
+fastapi==0.115.0
+uvicorn==0.31.0
+python-dotenv==1.0.1
+requests==2.32.3
+
+# Data Handling
+pandas==2.3.3
+pyarrow==17.0.0
+numpy==1.26.4
+
+# Snowflake (stable + pandas support)
+snowflake-connector-python[pandas]==3.18.0
+snowflake-snowpark-python==1.40.0
+
+# Optional (Render compatibility helpers)
+gunicorn==23.0.0
