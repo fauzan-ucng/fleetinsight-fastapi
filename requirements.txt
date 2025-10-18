@@ -6,14 +6,14 @@ uvicorn==0.31.0
 python-dotenv==1.0.1
 requests==2.32.3
 
-# Data Handling
-pandas==2.3.3
-numpy==1.26.4
-pyarrow==14.0.0
+# Data Handling - TURUNKAN VERSI UNTUK KOMPATIBILITAS
+pandas==2.1.4  # ✅ VERSI LEBIH KOMPATIBEL
+numpy==1.24.3  # ✅ VERSI LEBIH STABIL
+pyarrow==14.0.1  # ✅ HAPUS --no-build-isolation, PAKAI VERSI SPESIFIK
 
 # Snowflake (stable + pandas support)
 snowflake-connector-python[pandas]==3.18.0
 snowflake-snowpark-python==1.40.0
 
-# Optional (Render compatibility helpers)
+# Server
 gunicorn==23.0.0
