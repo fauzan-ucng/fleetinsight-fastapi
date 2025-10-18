@@ -4,24 +4,9 @@ services:
     env: python
     plan: free
     region: singapore
-    runtime: python
-    pythonVersion: "3.11.9"  # ✅ TURUNKAN VERSI PYTHON
-    
-    buildCommand: |
-      pip install --upgrade pip
-      pip install pyarrow --no-build-isolation --no-deps  # ✅ INSTALL PYARROW DULUAN
-      pip install -r requirements.txt
-      
-    startCommand: |
-      gunicorn -w 2 -k uvicorn.workers.UvicornWorker main:app --bind 0.0.0.0:$PORT --timeout 120  # ✅ TAMBAH BIND PORT
-    
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
     envVars:
-      - key: PYTHON_VERSION
-        value: "3.11.9"
-      - key: PIP_NO_BUILD_ISOLATION
-        value: "false"
-      - key: PYARROW_BUNDLE_ARROW_CPP
-        value: "1"
       - key: SNOWFLAKE_ACCOUNT
         sync: false
       - key: SNOWFLAKE_USER
@@ -31,9 +16,9 @@ services:
       - key: SNOWFLAKE_WAREHOUSE
         sync: false
       - key: SNOWFLAKE_DATABASE
-        sync: false
+        value: FLEET_ANALYTICS
       - key: SNOWFLAKE_SCHEMA
-        sync: false
+        value: ANALYTICS
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: TELEGRAM_CHAT_ID

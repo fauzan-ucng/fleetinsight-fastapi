@@ -1,46 +1,28 @@
 from fastapi import FastAPI
-import os
-import sys
-import requests
-from dotenv import load_dotenv
-
-# ========================================
-# 🧠 Environment Check
-# ========================================
-
-# Cek apakah sedang di dalam virtual environment
-if sys.prefix == sys.base_prefix:
-    print("⚠️  WARNING: Virtual environment (venv) belum aktif!")
-    print("💡 Jalankan salah satu perintah berikut sebelum run server:")
-    print("   👉 PowerShell (sementara): Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass")
-    print("   👉 PowerShell (aktifkan venv): .\\venv\\Scripts\\activate")
-    print("   👉 CMD (alternatif): venv\\Scripts\\activate.bat")
-    print("===============================================")
-
-# Cek apakah pandas sudah tersedia
-try:
-    import pandas as pd
-except ImportError:
-    print("⚠️  Pandas belum terinstal! Jalankan perintah berikut di terminal:")
-    print("   👉 pip install pandas")
-    print("===============================================")
-    pd = None  # agar script tetap jalan
-
-# ========================================
-# 📦 Import Snowflake dependencies
-# ========================================
+from datetime import datetime
+from pydantic import BaseModel
 from snowflake.snowpark import Session
-from snowflake.snowpark.functions import col
+from snowflake.snowpark.exceptions import SnowparkSQLException
+import os
+import requests
+import uuid
+import pandas as pd
+from dotenv import load_dotenv
+from apscheduler.schedulers.background import BackgroundScheduler
+import threading
+import time
 
-# ========================================
-# 🚀 App setup
-# ========================================
+# === Load Environment Variables ===
 load_dotenv()
-app = FastAPI(title="FleetInsight FastAPI Service", version="3.0")
 
-# ========================================
-# 🔧 Configuration
-# ========================================
+# === App Metadata ===
+app = FastAPI(
+    title="FleetInsight FastAPI",
+    version="2.0",
+    description="Fleet performance analyzer powered by Snowflake Snowpark + Telegram integration + Scheduler"
+)
+
+# === Environment Config ===
 SNOWFLAKE_ACCOUNT = os.getenv("SNOWFLAKE_ACCOUNT")
 SNOWFLAKE_USER = os.getenv("SNOWFLAKE_USER")
 SNOWFLAKE_PASSWORD = os.getenv("SNOWFLAKE_PASSWORD")
@@ -50,160 +32,240 @@ SNOWFLAKE_SCHEMA = os.getenv("SNOWFLAKE_SCHEMA")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# ========================================
-# 🔗 Snowflake Connection
-# ========================================
-def create_snowflake_session():
-    """Buat koneksi ke Snowflake."""
+# === Snowflake Session Factory ===
+def get_session():
     try:
-        session = Session.builder.configs({
+        connection_parameters = {
             "account": SNOWFLAKE_ACCOUNT,
             "user": SNOWFLAKE_USER,
             "password": SNOWFLAKE_PASSWORD,
             "warehouse": SNOWFLAKE_WAREHOUSE,
             "database": SNOWFLAKE_DATABASE,
-            "schema": SNOWFLAKE_SCHEMA
-        }).create()
-
-        # Pastikan warehouse aktif
-        session.sql(f"USE WAREHOUSE {SNOWFLAKE_WAREHOUSE}").collect()
-        session.sql(f"USE DATABASE {SNOWFLAKE_DATABASE}").collect()
-        session.sql(f"USE SCHEMA {SNOWFLAKE_SCHEMA}").collect()
+            "schema": SNOWFLAKE_SCHEMA,
+        }
+        session = Session.builder.configs(connection_parameters).create()
         return session
-
     except Exception as e:
-        print(f"❌ Snowflake connection failed: {e}")
-        return None
+        raise Exception(f"❌ Snowflake connection failed: {e}")
+    
 
-# ========================================
-# 🔔 Telegram Sender
-# ========================================
-def send_telegram_message(message: str):
-    """Kirim pesan ke Telegram bot."""
+# --- Utility: Log Insight ke Snowflake ---
+def log_insight_to_snowflake(df_logs: pd.DataFrame):
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
-        response = requests.post(url, json=payload)
-        if response.status_code != 200:
-            print(f"⚠️ Telegram error: {response.text}")
-        return response.json()
-    except Exception as e:
-        print(f"❌ Telegram send failed: {e}")
-        return None
-
-# ========================================
-# 🏠 Root Endpoint
-# ========================================
-@app.get("/")
-def home():
-    return {"message": "✅ FleetInsight FastAPI is running successfully!"}
-
-# ========================================
-# 📊 Pull Insight Endpoint
-# ========================================
-@app.get("/pull-insight")
-def pull_insight():
-    """Ambil performa kendaraan dari Snowflake."""
-    session = create_snowflake_session()
-    if session is None:
-        return {"status": "error", "message": "Gagal koneksi ke Snowflake"}
-
-    try:
-        query = """
-        SELECT VEHICLE_ID, 
-               AVG(AVG_SPEED) AS AVG_SPEED,
-               SUM(TOTAL_DISTANCE_KM) AS TOTAL_DISTANCE,
-               AVG(TOTAL_IDLE_TIME_S) AS AVG_IDLE_TIME
-        FROM FLEET_ANALYTICS.ANALYTICS.VEHICLE_METRICS
-        GROUP BY VEHICLE_ID
-        ORDER BY TOTAL_DISTANCE DESC
-        LIMIT 5
-        """
-        result = session.sql(query)
-
-        if pd:
-            df = result.to_pandas()
-            data = df.to_dict(orient="records")
-        else:
-            rows = result.collect()
-            data = [r.as_dict() for r in rows]
-
-        session.close()
-        return {"status": "success", "data": data}
-
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
-# ========================================
-# 📬 Manual Telegram Test
-# ========================================
-@app.post("/send-insight")
-def send_insight():
-    """Tes kirim pesan ke Telegram."""
-    message = "🚛 FleetInsight: Bot aktif & terhubung!"
-    res = send_telegram_message(message)
-    return {"status": "sent", "response": res}
-
-# ========================================
-# ⚡ Auto Notify Endpoint
-# ========================================
-@app.post("/auto-notify")
-def auto_notify():
-    """Ambil insight dari Snowflake, kirim ke Telegram, dan simpan ke tabel log."""
-    session = create_snowflake_session()
-    if session is None:
-        return {"status": "error", "message": "Gagal koneksi ke Snowflake"}
-
-    try:
-        query = """
-        SELECT VEHICLE_ID, 
-               AVG(AVG_SPEED) AS AVG_SPEED,
-               SUM(TOTAL_DISTANCE_KM) AS TOTAL_DISTANCE,
-               AVG(TOTAL_IDLE_TIME_S) AS AVG_IDLE_TIME
-        FROM FLEET_ANALYTICS.ANALYTICS.VEHICLE_METRICS
-        GROUP BY VEHICLE_ID
-        ORDER BY TOTAL_DISTANCE DESC
-        LIMIT 1
-        """
-        df = session.sql(query).to_pandas() if pd else session.sql(query).collect()
-        if not pd and not df:
-            return {"status": "no_data", "message": "Tidak ada data performa"}
-
-        if pd:
-            record = df.iloc[0]
-            vehicle, avg_speed, total_distance, avg_idle = (
-                record["VEHICLE_ID"],
-                round(record["AVG_SPEED"], 2),
-                round(record["TOTAL_DISTANCE"], 2),
-                round(record["AVG_IDLE_TIME"], 2)
-            )
-        else:
-            record = df[0].as_dict()
-            vehicle, avg_speed, total_distance, avg_idle = (
-                record["VEHICLE_ID"],
-                round(record["AVG_SPEED"], 2),
-                round(record["TOTAL_DISTANCE"], 2),
-                round(record["AVG_IDLE_TIME"], 2)
-            )
-
-        message = (
-            f"🚚 *FleetInsight Daily Report*\n\n"
-            f"📍 Kendaraan: `{vehicle}`\n"
-            f"🏁 Jarak Tempuh: {total_distance} km\n"
-            f"⚡ Kecepatan Rata-rata: {avg_speed} km/h\n"
-            f"⏱️ Waktu Idle: {avg_idle} detik\n\n"
-            f"Insight dikirim otomatis oleh Snowflake Cortex Agent."
-        )
-
-        send_telegram_message(message)
-
-        session.sql(f"""
-        INSERT INTO FLEET_ANALYTICS.ANALYTICS.INSIGHT_QUEUE (MESSAGE, STATUS)
-        VALUES ('{message}', 'SENT')
+        session = get_session()
+        session.use_database(SNOWFLAKE_DATABASE)
+        session.use_schema(SNOWFLAKE_SCHEMA)
+        # pastikan tabel log ada
+        session.sql("""
+            CREATE TABLE IF NOT EXISTS FLEET_ANALYTICS.ANALYTICS.INSIGHT_LOGS (
+                RUN_AT TIMESTAMP,
+                VEHICLE_ID STRING,
+                AVG_SPEED FLOAT,
+                TOTAL_DISTANCE FLOAT,
+                AVG_IDLE_TIME FLOAT,
+                TELEGRAM_STATUS STRING,
+                MESSAGE_ID STRING,
+                EXECUTION_ID STRING
+            );
         """).collect()
 
+        snow_df = session.create_dataframe(df_logs)
+        snow_df.write.mode("append").save_as_table("FLEET_ANALYTICS.ANALYTICS.INSIGHT_LOGS")
         session.close()
-        return {"status": "success", "message": "Insight terkirim ke Telegram dan disimpan ke tabel."}
+        return True
+    except Exception as e:
+        print(f"❌ Failed to log insights: {e}")
+        return False
+
+# --- Endpoint Root ---
+@app.get("/")
+def root():
+    return {
+        "message": "Welcome to FleetInsight FastAPI 🚀",
+        "docs": "/docs",
+        "timestamp": datetime.now().isoformat()
+    }
+
+# --- Endpoint Health Check ---
+@app.get("/health")
+def health_check():
+    snowflake_status = "❌"
+    telegram_status = "❌"
+
+    try:
+        session = get_session()
+        version = session.sql("SELECT CURRENT_VERSION()").collect()[0][0]
+        snowflake_status = f"✅ Connected (v{version})"
+        session.close()
+    except Exception as e:
+        snowflake_status = f"❌ {e}"
+
+    try:
+        r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getMe", timeout=5)
+        telegram_status = "✅ Connected" if r.status_code == 200 else f"❌ {r.status_code}"
+    except Exception as e:
+        telegram_status = f"❌ {e}"
+
+    return {
+        "status": "ok",
+        "timestamp": datetime.now().isoformat(),
+        "snowflake": snowflake_status,
+        "telegram": telegram_status,
+    }
+
+# --- Endpoint Metrics Overview ---
+@app.get("/metrics")
+def get_metrics():
+    try:
+        session = get_session()
+        query = """
+            SELECT 
+                COUNT(DISTINCT VEHICLE_ID) AS TOTAL_VEHICLES,
+                AVG(AVG_SPEED) AS AVG_SPEED,
+                SUM(TOTAL_DISTANCE_KM) AS TOTAL_DISTANCE,
+                AVG(TOTAL_IDLE_TIME_S) AS AVG_IDLE_TIME
+            FROM FLEET_ANALYTICS.ANALYTICS.VEHICLE_METRICS
+        """
+        result = session.sql(query).collect()[0]
+        session.close()
+
+        return {
+            "status": "success",
+            "timestamp": datetime.now().isoformat(),
+            "total_vehicle": int(result["TOTAL_VEHICLES"]),
+            "avg_speed": float(result["AVG_SPEED"]),
+            "total_distance": float(result["TOTAL_DISTANCE"]),
+            "avg_idle_time": float(result["AVG_IDLE_TIME"])
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+# --- Endpoint Pull Insight ---
+@app.get("/pull-insight")
+def pull_insight():
+    try:
+        session = get_session()
+        df = session.sql("""
+            SELECT 
+                VEHICLE_ID,
+                AVG(AVG_SPEED) AS AVG_SPEED,
+                SUM(TOTAL_DISTANCE_KM) AS TOTAL_DISTANCE,
+                AVG(TOTAL_IDLE_TIME_S) AS AVG_IDLE_TIME
+            FROM FLEET_ANALYTICS.ANALYTICS.VEHICLE_METRICS
+            GROUP BY VEHICLE_ID
+            ORDER BY TOTAL_DISTANCE DESC
+            LIMIT 5
+        """).to_pandas()
+        session.close()
+
+        return {
+            "status": "success",
+            "timestamp": datetime.now().isoformat(),
+            "data": df.to_dict(orient="records")
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+# --- Endpoint Auto Notify (kirim ke Telegram + log) ---
+@app.post("/auto-notify")
+def auto_notify():
+    try:
+        session = get_session()
+        df = session.sql("""
+            SELECT 
+                VEHICLE_ID,
+                AVG(AVG_SPEED) AS AVG_SPEED,
+                SUM(TOTAL_DISTANCE_KM) AS TOTAL_DISTANCE,
+                AVG(TOTAL_IDLE_TIME_S) AS AVG_IDLE_TIME
+            FROM FLEET_ANALYTICS.ANALYTICS.VEHICLE_METRICS
+            GROUP BY VEHICLE_ID
+            ORDER BY TOTAL_DISTANCE DESC
+            LIMIT 3
+        """).to_pandas()
+        session.close()
+
+        if df.empty:
+            return {"status": "warning", "message": "No data found"}
+
+        # buat pesan Telegram
+        message = "📊 *Fleet Performance Insights*\n\n"
+        for _, row in df.iterrows():
+            message += (
+                f"🚚 Vehicle: `{row['VEHICLE_ID']}`\n"
+                f"• Avg Speed: {row['AVG_SPEED']:.2f} km/h\n"
+                f"• Total Distance: {row['TOTAL_DISTANCE']:.2f} km\n"
+                f"• Idle Time: {row['AVG_IDLE_TIME']:.2f} min\n\n"
+            )
+        message += f"🕒 Updated at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+
+        telegram_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
+        r = requests.post(telegram_url, json=payload)
+
+        # status Telegram & logging
+        telegram_status = "✅ SENT" if r.status_code == 200 else f"❌ {r.status_code}"
+        message_id = r.json().get("result", {}).get("message_id", "N/A")
+        execution_id = str(uuid.uuid4())
+
+        df_logs = pd.DataFrame([
+            {
+                "RUN_AT": datetime.now(),
+                "VEHICLE_ID": row["VEHICLE_ID"],
+                "AVG_SPEED": row["AVG_SPEED"],
+                "TOTAL_DISTANCE": row["TOTAL_DISTANCE"],
+                "AVG_IDLE_TIME": row["AVG_IDLE_TIME"],
+                "TELEGRAM_STATUS": telegram_status,
+                "MESSAGE_ID": message_id,
+                "EXECUTION_ID": execution_id
+            }
+            for _, row in df.iterrows()
+        ])
+
+        log_insight_to_snowflake(df_logs)
+
+        global last_scheduler_run
+        last_scheduler_run = datetime.now().isoformat()
+
+        return {
+            "status": "success",
+            "message": f"Insight sent ({telegram_status})",
+            "execution_id": execution_id
+        }
 
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+# === Scheduler Setup ===
+scheduler = BackgroundScheduler()
+last_scheduler_run = None
+
+def scheduled_auto_notify():
+    """Job otomatis menjalankan auto-notify setiap 3 menit"""
+    try:
+        print(f"[{datetime.now()}] 🚀 Running scheduled auto-notify...")
+        response = requests.post("http://127.0.0.1:8000/auto-notify")
+        print(f"[{datetime.now()}] ✅ Scheduler response: {response.status_code}")
+    except Exception as e:
+        print(f"[{datetime.now()}] ❌ Scheduler failed: {e}")
+
+scheduler.add_job(scheduled_auto_notify, "interval", minutes=3)
+scheduler.start()
+print("✅ FleetInsight Scheduler started (interval: 3 minutes)")
+
+
+# Pastikan scheduler tetap hidup bersama FastAPI
+def run_scheduler():
+    while True:
+        time.sleep(60)  # tunggu 1 menit di setiap loop, hemat CPU
+
+threading.Thread(target=run_scheduler, daemon=True).start()
+
+# === Endpoint Scheduler Status ===
+@app.get("/scheduler-status")
+def scheduler_status():
+    return {
+        "status": "running",
+        "last_run": last_scheduler_run,
+        "interval_minutes": 30,
+        "timestamp": datetime.now().isoformat()
+    }
