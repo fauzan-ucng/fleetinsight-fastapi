@@ -2,14 +2,26 @@ services:
   - type: web
     name: fleetinsight-fastapi
     env: python
-    plan: free  # bisa kamu ubah ke starter untuk runtime lebih cepat
-    region: singapore  # pilih region terdekat dengan Snowflake (APAC)
+    plan: free
+    region: singapore
+    runtime: python
+    pythonVersion: "3.11.9"  # ✅ TURUNKAN VERSI PYTHON
+    
     buildCommand: |
       pip install --upgrade pip
+      pip install pyarrow --no-build-isolation --no-deps  # ✅ INSTALL PYARROW DULUAN
       pip install -r requirements.txt
+      
     startCommand: |
-      gunicorn -w 2 -k uvicorn.workers.UvicornWorker main:app --timeout 120
+      gunicorn -w 2 -k uvicorn.workers.UvicornWorker main:app --bind 0.0.0.0:$PORT --timeout 120  # ✅ TAMBAH BIND PORT
+    
     envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: PIP_NO_BUILD_ISOLATION
+        value: "false"
+      - key: PYARROW_BUNDLE_ARROW_CPP
+        value: "1"
       - key: SNOWFLAKE_ACCOUNT
         sync: false
       - key: SNOWFLAKE_USER
