@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from apscheduler.schedulers.background import BackgroundScheduler
 import threading
 import time
+from datetime import datetime
 
 # === Load Environment Variables ===
 load_dotenv()
@@ -31,6 +32,8 @@ SNOWFLAKE_DATABASE = os.getenv("SNOWFLAKE_DATABASE")
 SNOWFLAKE_SCHEMA = os.getenv("SNOWFLAKE_SCHEMA")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+# Ambil base URL dari environment (Render / Lokal)
+APP_BASE_URL = os.getenv("APP_BASE_URL", "http://127.0.0.1:10000")
 
 # === Snowflake Session Factory ===
 def get_session():
@@ -242,18 +245,29 @@ last_scheduler_run = None
 def scheduled_auto_notify():
     """Job otomatis menjalankan auto-notify setiap 3 menit"""
     try:
-        print(f"[{datetime.now()}] 🚀 Running scheduled auto-notify...")
-        response = requests.post("http://127.0.0.1:8000/auto-notify")
-        print(f"[{datetime.now()}] ✅ Scheduler response: {response.status_code}")
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[{timestamp}] 🚀 Running scheduled auto-notify...")
+        print(f"[Scheduler] Calling {APP_BASE_URL}/auto-notify ...")
+
+        # Panggil endpoint auto-notify dengan POST
+        response = requests.post(f"{APP_BASE_URL}/auto-notify")
+
+        # Logging hasil
+        if response.status_code == 200:
+            print(f"[{timestamp}] ✅ Scheduler success: {response.status_code}")
+        else:
+            print(f"[{timestamp}] ⚠️ Scheduler returned non-200: {response.status_code}")
+            print(f"[Scheduler] Response: {response.text}")
     except Exception as e:
         print(f"[{datetime.now()}] ❌ Scheduler failed: {e}")
 
+# Jalankan job setiap 3 menit
 scheduler.add_job(scheduled_auto_notify, "interval", minutes=3)
 scheduler.start()
 print("✅ FleetInsight Scheduler started (interval: 3 minutes)")
 
 
-# Pastikan scheduler tetap hidup bersama FastAPI
+# Pastikan scheduler tetap hidup bersama FastAPI # Loop pasif agar thread scheduler tetap hidup
 def run_scheduler():
     while True:
         time.sleep(60)  # tunggu 1 menit di setiap loop, hemat CPU
