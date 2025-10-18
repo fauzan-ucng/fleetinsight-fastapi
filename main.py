@@ -243,7 +243,7 @@ scheduler = BackgroundScheduler()
 last_scheduler_run = None
 
 def scheduled_auto_notify():
-    """Job otomatis menjalankan auto-notify setiap 3 menit"""
+    """Job otomatis menjalankan auto-notify setiap 60 menit"""
     try:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print(f"[{timestamp}] 🚀 Running scheduled auto-notify...")
@@ -262,9 +262,9 @@ def scheduled_auto_notify():
         print(f"[{datetime.now()}] ❌ Scheduler failed: {e}")
 
 # Jalankan job setiap 3 menit
-scheduler.add_job(scheduled_auto_notify, "interval", minutes=3)
+scheduler.add_job(scheduled_auto_notify, "interval", minutes=60)
 scheduler.start()
-print("✅ FleetInsight Scheduler started (interval: 3 minutes)")
+print("✅ FleetInsight Scheduler started (interval: 60 minutes)")
 
 
 # Pastikan scheduler tetap hidup bersama FastAPI # Loop pasif agar thread scheduler tetap hidup
@@ -280,6 +280,6 @@ def scheduler_status():
     return {
         "status": "running",
         "last_run": last_scheduler_run,
-        "interval_minutes": 30,
+        "interval_minutes": 60,
         "timestamp": datetime.now().isoformat()
     }
